@@ -12,7 +12,7 @@
     <a href="https://github.com/OMSociety/PCL-Download-Fixer/issues"><img src="https://img.shields.io/github/issues/OMSociety/PCL-Download-Fixer?color=4f6ef7" alt="Issues"></a>
   </p>
 
-<a href="#这是什么">这是什么</a> • <a href="#核心特性">核心特性</a> • <a href="#效果">效果</a> • <a href="#快速开始">快速开始</a> • <a href="#它在文件里改了什么">它在文件里改了什么</a> • <a href="#常见问题">常见问题</a> • <a href="#许可">许可</a>
+<a href="#这是什么">这是什么</a> • <a href="#效果">效果</a> • <a href="#快速开始">快速开始</a> • <a href="#常见问题">常见问题</a> • <a href="#许可">许可</a>
 </div>
 
 ## 这是什么
