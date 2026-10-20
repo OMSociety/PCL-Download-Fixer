@@ -51,7 +51,7 @@ PCL 2.99.0.0 的「下载」页面不再提供 Minecraft 原版游戏与加载�
 
 ### 直接使用
 
-1. 到 [Releases](https://github.com/OMSociety/PCL-Download-Fixer/releases/latest) 下载 `PCL 下载修复器.exe`。
+1. 到 [Releases](https://github.com/OMSociety/PCL-Download-Fixer/releases/latest) 下载 `PCL-Download-Fixer-<版本>-win-x64.exe`。
 2. **先完全退出 PCL**（右键任务栏托盘里的 PCL 图标退出，只关窗口不算）。
 3. 双击运行修复器。它通常会自动找到 PCL；没找到就点「浏览」选中 `Plain Craft Launcher 2.exe`，或直接把 exe 拖进窗口。
 4. 点「开始修复」，等状态栏变成「修复完成」。
