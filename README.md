@@ -17,7 +17,7 @@
 
 ## 这是什么
 
-**PCL 下载修复器**不联网、不重装、不替换你的 PCL —— 它直接改掉你电脑上那份 `Plain Craft Launcher 2.exe` 中三个被写死的判断。
+**PCL 下载修复器**不联网、不重装、不替换你的 PCL —— 它直接改掉你电脑上那份 `Plain Craft Launcher 2.exe` 里六处写死的拦截，下载页与整合包本地导入都能恢复正常。
 
 整个程序是一个带操作界面的 exe，选文件、点按钮、完事。
 
@@ -74,7 +74,7 @@ PCL 启动后会独占自己的 exe 文件。请从托盘图标彻底退出 PCL 
 把 PCL 目录里的 `Plain Craft Launcher 2.exe.bak` 改名回 `Plain Craft Launcher 2.exe`，覆盖现有的 exe 即可。备份是原始文件的完整副本。
 
 **重启 PCL 后下载页还是空的？**
-先确认修复器日志里是「修复完成（3 处）」而不是「无需修复」或错误提示。若三处都成功但页面仍不正常，说明你的 PCL 版本与 2.99.0.0 不同，请提 [Issue](https://github.com/OMSociety/PCL-Download-Fixer/issues) 并附上日志。
+先确认修复器日志里是「修复完成（6 处）」而不是「无需修复」或错误提示。若六处都成功但页面仍不正常，说明你的 PCL 版本与 2.99.0.0 不同，请提 [Issue](https://github.com/OMSociety/PCL-Download-Fixer/issues) 并附上日志。
 
 **PCL 更新后需要重新修复吗？**
 需要。更新会覆盖 exe，把改动全部冲掉，更新完再跑一次修复器即可。

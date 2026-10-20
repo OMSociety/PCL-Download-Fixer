@@ -19,6 +19,7 @@ internal sealed class PatchResult
     public bool InUse;               // 目标文件被占用（PCL 正在运行）
     public int Applied;              // 实际修改处数
     public bool ResourceDetailSkipped; // 资源详情页未能修复
+    public bool ModpackSkipped;        // 整合包本地导入未能修复
     public string? Error;
     public string? BackupPath;
     public List<string> Steps = new();
@@ -64,6 +65,8 @@ internal static class Patcher
             PatchLoaderLambda(mod, r);
             PatchModifyVisibility(mod, r);
             PatchResourceDetail(mod, r);
+            PatchModpackInstall(mod, r);
+            PatchModpackEntry(mod, r);
 
             if (r.Applied == 0) { r.AlreadyFixed = true; return r; }
             if (dryRun) return r;
@@ -244,10 +247,19 @@ internal static class Patcher
                 if (ins[i].OpCode != OpCodes.Callvirt) continue;
                 if (ins[i].Operand is not IMethod tl || tl.Name != "ToListItem") continue;
 
-                // 形态可能是 (obj, Save_Click, null, bad) 或 (obj, null, null, bad)
+                // 参数顺序是 (列表项处理器, 图标按钮处理器, Boolean)，
+                // 所以要找的是紧跟在 ClickEventHandler::.ctor 之后、被置空的那个处理器，
+                // 它不一定正好贴着 callvirt。
                 int at = -1;
-                if (ins[i - 1].OpCode == OpCodes.Ldnull && ins[i - 2].OpCode == OpCodes.Ldnull) at = i - 2;
-                else if (ins[i - 1].OpCode == OpCodes.Ldnull && ins[i - 2].OpCode == OpCodes.Newobj) at = i - 1;
+                for (int k = i - 1; k >= 0 && k >= i - 3; k--)
+                {
+                    if (ins[k].OpCode != OpCodes.Ldnull) continue;
+                    if (k == 0 || ins[k - 1].OpCode != OpCodes.Newobj) continue;
+                    if (ins[k - 1].Operand is not IMethod ctor || ctor.Name != ".ctor") continue;
+                    if (ctor.DeclaringType?.Name.Contains("ClickEventHandler") != true) continue;
+                    at = k;
+                    break;
+                }
                 if (at < 0) continue;
 
                 ins[at] = OpCodes.Ldarg_0.ToInstruction();
@@ -260,5 +272,231 @@ internal static class Patcher
             }
         }
         r.ResourceDetailSkipped = true;
+    }
+
+    // ── 5. ModModpack.ModpackInstall(File, InstanceName, Logo) ──
+    // 原版：识别出整合包种类后按 PackType 分发到七个 InstallPack* 方法。
+    // 现版：种类识别完整保留，但其后的分发整段被编译器当作不可达代码删除，
+    //       方法体以一条无条件 throw 收尾，因此该方法永不返回（末尾没有 ret）。
+    // 还原：把这条 throw 换成按 PackType 的 switch，并补回返回路径。
+    // 注意分发代码位于 try 块内，返回必须先 leave 出 try 走到 finally 之后。
+    private static void PatchModpackInstall(ModuleDefMD mod, PatchResult r)
+    {
+        var t = mod.GetTypes().FirstOrDefault(x => x.FullName == "PCL.ModModpack");
+        var m = t?.Methods.FirstOrDefault(x => x.Name == "ModpackInstall" && x.Parameters.Count == 3);
+        if (m is null || !m.HasBody) { r.ModpackSkipped = true; r.Steps.Add("整合包：未找到安装方法"); return; }
+
+        var body = m.Body;
+        var ins = body.Instructions;
+
+        // 已修过的方法以 ldloc.0 / ret 收尾；未修过的以 endfinally 收尾
+        if (ins.Count > 0 && ins[^1].OpCode == OpCodes.Ret)
+        { r.Steps.Add("整合包：本地导入已可用"); return; }
+
+        if (body.Variables.Count < 5 || ins.Count < 3 || ins[^1].OpCode != OpCodes.Endfinally)
+        { r.ModpackSkipped = true; r.Steps.Add("整合包：结构不符，跳过"); return; }
+
+        // 守卫三连：ldstr(提示语) + newobj Exception::.ctor + throw
+        int g = -1;
+        for (int i = 0; i + 2 < ins.Count; i++)
+        {
+            if (ins[i].OpCode != OpCodes.Ldstr || ins[i].Operand is not string s || !s.Contains(GuardMsg)) continue;
+            if (ins[i + 1].OpCode != OpCodes.Newobj || ins[i + 2].OpCode != OpCodes.Throw) continue;
+            g = i; break;
+        }
+        if (g < 0) { r.ModpackSkipped = true; r.Steps.Add("整合包：未找到守卫"); return; }
+
+        // 外层 try/finally 的处理器一直延伸到方法末尾（HandlerEnd 为 null）
+        var outerFinally = body.ExceptionHandlers.FirstOrDefault(
+            e => e.HandlerType == ExceptionHandlerType.Finally && e.HandlerEnd is null);
+        if (outerFinally is null) { r.ModpackSkipped = true; r.Steps.Add("整合包：未找到外层 finally"); return; }
+
+        IMethod? Find(string name) => t!.Methods.FirstOrDefault(x => x.Name == name && x.IsStatic);
+        var fCurse    = Find("InstallPackCurseForge");
+        var fModrinth = Find("InstallPackModrinth");
+        var fHMCL     = Find("InstallPackHMCL");
+        var fMMC      = Find("InstallPackMMC");
+        var fMCBBS    = Find("InstallPackMCBBS");
+        var fLauncher = Find("InstallPackLauncherPack");
+        var fCompress = Find("InstallPackCompress");
+        if (fCurse is null || fModrinth is null || fHMCL is null || fMMC is null
+            || fMCBBS is null || fLauncher is null || fCompress is null)
+        { r.ModpackSkipped = true; r.Steps.Add("整合包：安装方法缺失，跳过"); return; }
+
+        var guardStr = ins[g];
+        var retVal    = body.Variables[0]; // LoaderCombo(Of String)
+        var archive   = body.Variables[1]; // ZipArchive
+        var baseDir   = body.Variables[2]; // ArchiveBaseFolder
+        var packType  = body.Variables[4]; // Integer
+
+        var ldRet = Instruction.Create(OpCodes.Ldloc, retVal);
+        var ret   = Instruction.Create(OpCodes.Ret);
+
+        var block = new List<Instruction>();
+
+        // 每个分支：压参数 → call → 存返回值 → 跳出 try
+        Instruction Branch(IMethod target, bool withName, bool withLogo)
+        {
+            var head = Instruction.Create(OpCodes.Ldarg_0);
+            block.Add(head);
+            block.Add(Instruction.Create(OpCodes.Ldloc, archive));
+            block.Add(Instruction.Create(OpCodes.Ldloc, baseDir));
+            if (withName) block.Add(Instruction.Create(OpCodes.Ldarg_1));
+            if (withLogo) block.Add(Instruction.Create(OpCodes.Ldarg_2));
+            block.Add(Instruction.Create(OpCodes.Call, target));
+            block.Add(Instruction.Create(OpCodes.Stloc, retVal));
+            block.Add(Instruction.Create(OpCodes.Leave, ldRet));
+            return head;
+        }
+
+        var cElse = Branch(fCompress, false, false);   // Case Else：未识别，按压缩包处理
+        var c0 = Branch(fCurse,    true,  true);
+        var c1 = Branch(fHMCL,     false, false);
+        var c2 = Branch(fMMC,      false, false);
+        var c3 = Branch(fMCBBS,    true,  false);
+        var c4 = Branch(fModrinth, true,  true);
+        var c9 = Branch(fLauncher, false, false);
+
+        var entry = Instruction.Create(OpCodes.Ldloc, packType);
+        var sw = Instruction.Create(OpCodes.Switch,
+            new[] { c0, c1, c2, c3, c4, cElse, cElse, cElse, cElse, c9 });
+        var brElse = Instruction.Create(OpCodes.Br, cElse);
+
+        // 原先所有「Exit Try」都跳向守卫语句，现在改跳分发入口
+        foreach (var i in ins)
+        {
+            if (!ReferenceEquals(i.Operand, guardStr)) continue;
+            i.Operand = entry;
+            if (i.OpCode == OpCodes.Leave_S) i.OpCode = OpCodes.Leave; // 目标变远，短跳转放不下
+        }
+        // catch 处理器的结束位置同样指向守卫语句
+        foreach (var eh in body.ExceptionHandlers)
+            if (eh.HandlerType == ExceptionHandlerType.Catch && ReferenceEquals(eh.HandlerEnd, guardStr))
+                eh.HandlerEnd = entry;
+
+        // 返回值要放在 finally 之后，leave 才有合法的落点
+        ins.Add(ldRet);
+        ins.Add(ret);
+        outerFinally.HandlerEnd = ldRet;
+
+        block.Insert(0, brElse);
+        block.Insert(0, sw);
+        block.Insert(0, entry);
+        for (int k = 0; k < block.Count; k++) ins.Insert(g + k, block[k]);
+
+        // 删掉已不可达的原守卫三连（此时位于插入块之后）
+        for (int k = 0; k < 3; k++) ins.RemoveAt(g + block.Count);
+
+        if (body.MaxStack < 8) body.MaxStack = 8;
+        body.UpdateInstructionOffsets();
+
+        r.Applied++;
+        r.Steps.Add("整合包：本地导入已恢复");
+    }
+
+    /// <summary>
+    /// 无参 ModpackInstall 原本弹出「选择整合包压缩文件」对话框，再把路径交给后台线程安装；
+    /// 守卫内联后整段被编译掉，只剩一句提示。这里按原样把入口重建出来。
+    /// </summary>
+    private static void PatchModpackEntry(ModuleDefMD mod, PatchResult r)
+    {
+        var t = mod.GetTypes().FirstOrDefault(x => x.FullName == "PCL.ModModpack");
+        var m = t?.Methods.FirstOrDefault(x => x.Name == "ModpackInstall" && x.Parameters.Count == 0);
+        if (m is null || !m.HasBody)
+        { r.Steps.Add("整合包入口：未找到无参方法"); return; }
+
+        var ins = m.Body.Instructions;
+
+        // 修过的版本会调用文件选择框
+        if (ins.Any(i => i.Operand is IMethod im && im.Name == "SelectFile"))
+        { r.Steps.Add("整合包入口：已可用"); return; }
+
+        // 未修过的版本只剩一句提示
+        if (!ins.Any(i => i.OpCode == OpCodes.Ldstr && i.Operand is string s && s.Contains(GuardMsg)))
+        { r.Steps.Add("整合包入口：结构不符，跳过"); return; }
+
+        var closure = mod.GetTypes().FirstOrDefault(x => x.FullName == "PCL.ModModpack/_Closure$__0-0");
+        var ctor    = closure?.Methods.FirstOrDefault(x => x.IsConstructor);
+        var field   = closure?.Fields.FirstOrDefault(x => x.Name == "$VB$Local_File");
+        var lambda  = closure?.Methods.FirstOrDefault(x => x.Name == "_Lambda$__0");
+        var runThread = mod.GetTypes().FirstOrDefault(x => x.FullName == "PCL.ModBase")
+                           ?.Methods.FirstOrDefault(x => x.Name == "RunInThread" && x.MethodSig.Params.Count == 1);
+        if (closure is null || ctor is null || field is null || lambda is null || runThread is null)
+        { r.Steps.Add("整合包入口：闭包缺失，跳过"); return; }
+
+        // 复用模块里已有的方法引用，避免自己拼 TypeSig
+        IMethod? selectFile = null, first = null, isNullOrEmpty = null, actionCtor = null;
+        foreach (var mt in mod.GetTypes())
+            foreach (var mm in mt.Methods)
+            {
+                if (!mm.HasBody) continue;
+                foreach (var i in mm.Body.Instructions)
+                {
+                    if (i.Operand is not IMethod im) continue;
+                    if (selectFile is null && im.Name == "SelectFile" && im.MethodSig.Params.Count == 4)
+                        selectFile = im;
+                    else if (first is null && im is MethodSpec ms && ms.Name == "FirstOrDefault"
+                             && ms.Method.MethodSig.Params.Count == 1
+                             && ms.GenericInstMethodSig?.GenericArguments.Count == 1
+                             && ms.GenericInstMethodSig.GenericArguments[0].FullName == "System.String")
+                        first = ms;
+                    else if (isNullOrEmpty is null && im.Name == "IsNullOrEmpty")
+                        isNullOrEmpty = im;
+                    else if (actionCtor is null && im.Name == ".ctor" && im.DeclaringType?.FullName == "System.Action")
+                        actionCtor = im;
+                }
+            }
+        if (selectFile is null || first is null || isNullOrEmpty is null || actionCtor is null)
+        { r.Steps.Add("整合包入口：外部方法引用缺失，跳过"); return; }
+
+        var body = m.Body;
+        body.ExceptionHandlers.Clear();
+        body.Variables.Clear();
+
+        var filterType = selectFile.MethodSig.Params[3]; // Nullable(Of OneOf(...))
+        var vClosure = new Local(closure.ToTypeSig());
+        var vFile    = new Local(mod.CorLibTypes.String);
+        var vFilter  = new Local(filterType);
+        body.Variables.Add(vClosure);
+        body.Variables.Add(vFile);
+        body.Variables.Add(vFilter);
+
+        // 过滤条件传空（默认值），让用户自由选择整合包文件
+        var initFilter = new Instruction { OpCode = OpCodes.Initobj, Operand = filterType.ToTypeDefOrRef() };
+
+        var ret = Instruction.Create(OpCodes.Ret);
+        var list = new List<Instruction>
+        {
+            Instruction.Create(OpCodes.Ldstr, "选择整合包压缩文件"),
+            Instruction.Create(OpCodes.Ldc_I4_0),
+            Instruction.Create(OpCodes.Ldnull),
+            Instruction.Create(OpCodes.Ldloca, vFilter),
+            initFilter,
+            Instruction.Create(OpCodes.Ldloc, vFilter),
+            Instruction.Create(OpCodes.Call, selectFile),
+            Instruction.Create(OpCodes.Call, first),
+            Instruction.Create(OpCodes.Stloc, vFile),
+            Instruction.Create(OpCodes.Ldloc, vFile),
+            Instruction.Create(OpCodes.Call, isNullOrEmpty),
+            Instruction.Create(OpCodes.Brtrue, ret),
+            Instruction.Create(OpCodes.Newobj, ctor),
+            Instruction.Create(OpCodes.Stloc, vClosure),
+            Instruction.Create(OpCodes.Ldloc, vClosure),
+            Instruction.Create(OpCodes.Ldloc, vFile),
+            Instruction.Create(OpCodes.Stfld, field),
+            Instruction.Create(OpCodes.Ldloc, vClosure),
+            Instruction.Create(OpCodes.Ldftn, lambda),
+            Instruction.Create(OpCodes.Newobj, actionCtor),
+            Instruction.Create(OpCodes.Call, runThread),
+            ret
+        };
+
+        ins.Clear();
+        foreach (var i in list) ins.Add(i);
+        body.MaxStack = 3;
+        body.UpdateInstructionOffsets();
+
+        r.Applied++;
+        r.Steps.Add("整合包入口：本地导入对话框已恢复");
     }
 }

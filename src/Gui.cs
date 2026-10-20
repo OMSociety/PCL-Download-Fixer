@@ -409,7 +409,9 @@ internal static class Gui
         if (result.BackupPath is not null) Log("已备份原文件：" + Path.GetFileName(result.BackupPath));
         Log($"完成，共修改 {result.Applied} 处。");
         if (result.ResourceDetailSkipped)
-            Log("整合包本地导入仍不可用（该版本已删除安装分发代码）。");
+            Log("资源详情页的安装按钮未能恢复。");
+        if (result.ModpackSkipped)
+            Log("整合包本地导入未能恢复（该版本的分发代码已被删除）。");
         Log("");
         Log("请关闭 PCL 后重新启动，即可正常下载原版游戏。");
         Log("");
