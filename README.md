@@ -61,7 +61,7 @@ dotnet publish src/Fixer.csproj -c Release -r win-x64 --self-contained true ^
   -o dist
 ```
 
-产物是 `dist/PCL 下载修复器.exe`，单个文件，约 69 MB。
+产物是 `dist/PCL 下载修复器.exe`，单个文件，约 65 MB。
 
 `assets/app.ico` 由 `tools/` 下的 MakeIco 工具从 `assets/logo.png` 生成，仅在更换图标时需要重新运行。
 
