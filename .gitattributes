@@ -1,0 +1,15 @@
+# 行尾与编码统一：文本文件入库 LF，Windows 专属工程文件保持 CRLF
+* text=auto
+*.cs text eol=lf
+*.axaml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.gitattributes text eol=lf
+*.csproj text eol=crlf
+*.slnx text eol=crlf
+*.ico binary
+*.png binary
+*.jpg binary
+*.exe binary
+*.dll binary
