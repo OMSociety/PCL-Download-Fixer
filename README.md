@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/OMSociety/PCL-Download-Fixer/main/assets/logo.png" alt="PCL 下载修复器" width="128">
-  <h1>PCL 下载修复器</h1>
+<h1><img src="https://raw.githubusercontent.com/OMSociety/PCL-Download-Fixer/main/assets/logo.png" width="192" alt="PCL 下载修复器"><br>PCL 下载修复器</h1>
+
   <p>恢复 PCL 2.99.0.0 的原版 Minecraft 下载入口。</p>
   <p>选好主程序，点一次按钮。</p>
 
